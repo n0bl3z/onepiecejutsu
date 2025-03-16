@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         One Piece Tracker Mobile V2
 // @namespace    https://github.com/n0bl3z
-// @version      2.3
+// @version      2.4
 // @description  Мобильная версия трекера просмотра One Piece с автосохранением прогресса
 // @author       Anonymous
 // @match        *://jut.su/oneepiece/*
@@ -31,7 +31,7 @@
   const CONFIG = {
     DEBUG: false, // Выключаем отладку для производительности
     SYNC_WITH_ACCOUNT: true, // Синхронизация с аккаунтом сайта
-    VERSION: "2.3", // Версия скрипта
+    VERSION: "2.4", // Версия скрипта
     SAVE_INTERVAL: 30, // Интервал сохранения в секундах
     GITHUB_TOKEN: localStorage.getItem("onePieceGithubToken") || "",
     USE_CLOUD: true, // Включаем синхронизацию с облаком
@@ -931,7 +931,7 @@
   // Добавляем функцию для проверки обновлений
   async function checkForUpdates() {
     try {
-      const currentVersion = "2.3"; // Текущая версия скрипта (должна совпадать с @version)
+      const currentVersion = "2.4"; // Текущая версия скрипта (должна совпадать с @version)
       const scriptUrl =
         "https://raw.githubusercontent.com/n0bl3z/onepiecejutsu/main/oneepicejutsu.js";
 
@@ -1215,10 +1215,15 @@
         // 2. Проверяем и нажимаем кнопку воспроизведения, если видео на паузе
         const player = Utils.findVideoPlayer();
         if (player && player.paused && !player.ended) {
-          const playButton = Utils.findPlayButton();
-          if (playButton) {
-            Utils.forceClick(playButton);
-            showNotification("▶️ Воспроизведение", 1000);
+          // Нажимаем на кнопку воспроизведения только при первой загрузке страницы
+          if (!sessionStorage.getItem("initial_play_triggered")) {
+            const playButton = Utils.findPlayButton();
+            if (playButton) {
+              Utils.forceClick(playButton);
+              showNotification("▶️ Воспроизведение", 1000);
+              // Устанавливаем флаг, что начальное воспроизведение уже запущено
+              sessionStorage.setItem("initial_play_triggered", "true");
+            }
           }
         }
 
