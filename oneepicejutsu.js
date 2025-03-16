@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         One Piece Tracker Mobile V2
 // @namespace    https://github.com/n0bl3z
-// @version      2.2
+// @version      2.3
 // @description  Мобильная версия трекера просмотра One Piece с автосохранением прогресса
 // @author       Anonymous
 // @match        *://jut.su/oneepiece/*
@@ -24,14 +24,14 @@
 // - Жесты управления видео
 // - Удобные кнопки для смартфонов
 
-(function () {
+(function () { 
   "use strict";
 
   // Конфигурация
   const CONFIG = {
     DEBUG: false, // Выключаем отладку для производительности
     SYNC_WITH_ACCOUNT: true, // Синхронизация с аккаунтом сайта
-    VERSION: "2.2", // Версия скрипта
+    VERSION: "2.3", // Версия скрипта
     SAVE_INTERVAL: 30, // Интервал сохранения в секундах
     GITHUB_TOKEN: localStorage.getItem("onePieceGithubToken") || "",
     USE_CLOUD: true, // Включаем синхронизацию с облаком
@@ -176,12 +176,48 @@
         // Техника №3: Для мобильных устройств, эмулируем сенсорное событие
         if (DEVICE && DEVICE.hasTouch) {
           try {
-            const touchStart = new Event("touchstart", { bubbles: true });
-            const touchEnd = new Event("touchend", { bubbles: true });
-            element.dispatchEvent(touchStart);
-            element.dispatchEvent(touchEnd);
+            // Улучшенные сенсорные события с координатами
+            const touch = new Touch({
+              identifier: Date.now(),
+              target: element,
+              clientX: rect.left + rect.width / 2,
+              clientY: rect.top + rect.height / 2,
+              radiusX: 2.5,
+              radiusY: 2.5,
+              rotationAngle: 0,
+              force: 0.5,
+            });
+            
+            const touchStartEvent = new TouchEvent('touchstart', {
+              bubbles: true,
+              cancelable: true,
+              touches: [touch],
+              targetTouches: [touch],
+              changedTouches: [touch],
+            });
+            
+            const touchEndEvent = new TouchEvent('touchend', {
+              bubbles: true,
+              cancelable: true,
+              touches: [],
+              targetTouches: [],
+              changedTouches: [touch],
+            });
+            
+            element.dispatchEvent(touchStartEvent);
+            setTimeout(() => {
+              element.dispatchEvent(touchEndEvent);
+            }, 50);
           } catch (e) {
-            // Игнорируем ошибки сенсорных событий
+            // Если продвинутые TouchEvent не поддерживаются, используем базовые Event
+            try {
+              const touchStart = new Event("touchstart", { bubbles: true });
+              const touchEnd = new Event("touchend", { bubbles: true });
+              element.dispatchEvent(touchStart);
+              element.dispatchEvent(touchEnd);
+            } catch (e2) {
+              console.error("Ошибка при эмуляции сенсорных событий:", e2);
+            }
           }
         }
 
@@ -213,6 +249,61 @@
         } catch (err) {
           return false;
         }
+      }
+    },
+
+    // Находит кнопку воспроизведения видео
+    findPlayButton: function() {
+      try {
+        // Кэшируем результат для оптимизации
+        const cachedButton = ElementCache.get("playButton");
+        if (cachedButton) {
+          return cachedButton;
+        }
+        
+        // 1. Проверяем наличие видеоплеера
+        const player = this.findVideoPlayer();
+        if (!player) return null;
+        
+        // 2. Ищем кнопку в стандартных контейнерах VideoJS и других плееров
+        const selectors = [
+          // VideoJS
+          ".vjs-play-control", 
+          ".vjs-big-play-button",
+          ".vjs-play-button",
+          // Универсальные
+          ".play-button",
+          "[aria-label='Play']",
+          "[title='Воспроизвести']",
+          "[title='Play']",
+          // По иконкам
+          "button .icon-play",
+          "button .fa-play",
+          // На jut.su специфичные
+          "#my-player .vjs-play-control",
+          ".video-control-play-pause"
+        ];
+        
+        for (const selector of selectors) {
+          const elements = document.querySelectorAll(selector);
+          for (const el of elements) {
+            if (el && el.offsetParent !== null && !el.classList.contains('vjs-playing')) {
+              ElementCache.set("playButton", el);
+              return el;
+            }
+          }
+        }
+        
+        // 3. Если не нашли кнопку, используем сам видеоплеер
+        if (player && player.paused) {
+          ElementCache.set("playButton", player);
+          return player;
+        }
+        
+        return null;
+      } catch (error) {
+        console.error("Ошибка при поиске кнопки воспроизведения:", error);
+        return null;
       }
     },
   };
@@ -840,7 +931,7 @@
   // Добавляем функцию для проверки обновлений
   async function checkForUpdates() {
     try {
-      const currentVersion = "2.2"; // Текущая версия скрипта (должна совпадать с @version)
+      const currentVersion = "2.3"; // Текущая версия скрипта (должна совпадать с @version)
       const scriptUrl =
         "https://raw.githubusercontent.com/n0bl3z/onepiecejutsu/main/oneepicejutsu.js";
 
@@ -1121,18 +1212,44 @@
           showNotification("Пропущена заставка! ⏭", 1500);
         }
 
-        // 2. Проверяем "Следующая серия"
+        // 2. Проверяем и нажимаем кнопку воспроизведения, если видео на паузе
         const player = Utils.findVideoPlayer();
+        if (player && player.paused && !player.ended) {
+          const playButton = Utils.findPlayButton();
+          if (playButton) {
+            Utils.forceClick(playButton);
+            showNotification("▶️ Воспроизведение", 1000);
+          }
+        }
+
+        // 3. Проверяем "Следующая серия"
         if (player && player.ended) {
+          // Сохраняем состояние окончания видео
+          if (!sessionStorage.getItem("video_ended_state")) {
+            sessionStorage.setItem("video_ended_state", "true");
+          }
+          
           // Видео закончилось, ищем кнопку следующей серии
+          const nextButton = findNextEpisodeButton();
+          if (nextButton) {
+            // Добавляем небольшую задержку для стабильности
+            setTimeout(() => {
+              Utils.forceClick(nextButton);
+              showNotification("Переход к следующей серии ▶️", 1500);
+            }, 300);
+          }
+        } else if (sessionStorage.getItem("video_ended_state")) {
+          // Если видео уже не завершено, но был установлен флаг завершения,
+          // продолжаем поиск кнопки следующей серии еще некоторое время
           const nextButton = findNextEpisodeButton();
           if (nextButton) {
             Utils.forceClick(nextButton);
             showNotification("Переход к следующей серии ▶️", 1500);
+            sessionStorage.removeItem("video_ended_state");
           }
         }
 
-        // 3. Проверяем промо и рекламу
+        // 4. Проверяем промо и рекламу
         const promoElements = document.querySelectorAll(
           ".vjs-overlay, .vjs-overlay-promo, .vjs-promo-container"
         );
